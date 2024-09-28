@@ -1,4 +1,4 @@
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 from flask_cors import CORS
 from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime,timedelta
@@ -74,17 +74,126 @@ def get_books():
     result = [{"id": book.id, "name": book.name, "author": book.author, "year_published": book.year_published, "type": book.type} for book in books]
     return jsonify(result)
 
-@app.route('/customers', methods=['GET'])
-def get_customers():
-    customers = Customer.query.all()
-    result = [{"id": customer.id, "name": customer.name, "city": customer.city, "age": customer.age} for customer in customers]
-    return jsonify(result)
+
 
 @app.route('/loans', methods=['GET'])
 def get_loans():
     loans = Loan.query.all()
     result = [{"id": loan.id, "cust_id": loan.cust_id, "book_id": loan.book_id, "loan_date": loan.loan_date, "return_date": loan.return_date} for loan in loans]
     return jsonify(result)
+
+
+
+
+
+
+
+
+
+# crud for customer
+
+
+# get all customers.
+@app.route('/customers', methods=['GET'])
+def get_customers():
+    customers = Customer.query.all()
+    result = [{"id": customer.id, "name": customer.name, "city": customer.city, "age": customer.age} for customer in customers]
+    return jsonify(result), 200
+
+
+# get single customer
+@app.route('/customers/<int:id>', methods=['GET'])
+def get_customer(id):
+    customer = Customer.query.get(id)
+    
+    if customer is None:
+        return jsonify({"error": "Customer not found"}), 404
+
+    result = {"id": customer.id, "name": customer.name, "city": customer.city, "age": customer.age}
+    return jsonify(result), 200
+    
+# function that create a new customer
+def add_new_customer(name, city, age):
+    # Create a new customer instance
+    new_customer = Customer(name=name, city=city, age=age)
+    
+    # Add the new customer to the session
+    db.session.add(new_customer)
+    
+    # Commit the session to save the new customer to the database
+    db.session.commit()
+    
+    print(f"Customer '{name}' added successfully!")
+
+# route to add new customer.
+@app.route('/add_customer', methods=['POST'])
+def add_customer():
+    data = request.get_json()
+    name = data.get('name')
+    city = data.get('city')
+    age = data.get('age')
+
+    add_new_customer(name, city, age)
+    
+    return jsonify({"message": f"Customer {name} added successfully!"}), 201
+
+
+
+# update by id 
+@app.route('/customers/<int:id>', methods=['PUT'])
+def update_customer(id):
+    try:
+        customer = Customer.query.get(id)
+        
+        if customer is None:
+            return jsonify({"error": "Customer not found"}), 404
+
+        data = request.get_json()
+        name = data.get('name')
+        city = data.get('city')
+        age = data.get('age')
+
+        # Validate input
+        if not name or not city or not age:
+            return jsonify({"error": "Missing required fields: name, city, or age"}), 400
+
+        if not isinstance(age, int) or age < 0:
+            return jsonify({"error": "Invalid age value"}), 400
+
+        # Update customer details
+        customer.name = name
+        customer.city = city
+        customer.age = age
+
+        db.session.commit()
+        return jsonify({"message": f"Customer '{name}' updated successfully!"}), 200
+    
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+
+# delete customer function 
+
+@app.route('/customers/<int:id>', methods=['DELETE'])
+def delete_customer(id):
+    try:
+        customer = Customer.query.get(id)
+        
+        if customer is None:
+            return jsonify({"error": "Customer not found"}), 404
+
+        # Delete the customer
+        db.session.delete(customer)
+        db.session.commit()
+
+        return jsonify({"message": f"Customer '{customer.name}' deleted successfully!"}), 200
+    
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+
 
 # Initialize database 
 with app.app_context():
