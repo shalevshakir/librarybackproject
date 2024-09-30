@@ -19,7 +19,9 @@ class Book(db.Model):
     name = db.Column(db.String(100), nullable=False)
     author = db.Column(db.String(100), nullable=False)
     year_published = db.Column(db.Integer, nullable=False)
-    type = db.Column(db.Integer, nullable=False)  # 1, 2, or 3
+    type = db.Column(db.Integer, nullable=False)
+    is_deleted = db.Column(db.Boolean, default=False)  # This column tracks if the book is deleted
+
 
 class Customer(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -70,24 +72,83 @@ def index():
 
 @app.route('/books', methods=['GET'])
 def get_books():
-    books = Book.query.all()
-    result = [{"id": book.id, "name": book.name, "author": book.author, "year_published": book.year_published, "type": book.type} for book in books]
+    books = Book.query.filter_by(is_deleted=False).all()  # Only return books that aren't deleted
+    result = [
+        {"id": book.id, "name": book.name, "author": book.author, "year_published": book.year_published, "type": book.type}
+        for book in books
+    ]
     return jsonify(result)
 
+# create book
+@app.route('/books', methods=['POST'])
+def add_book():
+    try:
+        data = request.get_json()
+
+        name = data.get('name')
+        author = data.get('author')
+        year_published = data.get('year_published')
+        book_type = data.get('type')
+
+        # Validate input
+        if not name or not author or not year_published or not book_type:
+            return jsonify({"error": "Missing required fields: name, author, year_published, and type"}), 400
+
+        # Create new book instance
+        new_book = Book(name=name, author=author, year_published=year_published, type=book_type)
+
+        # Add to the database
+        db.session.add(new_book)
+        db.session.commit()
+
+        return jsonify({"message": "Book added successfully!"}), 201
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/books/search/<string:book_name>', methods=['GET'])
+def find_book_by_name(book_name):
+    try:
+        # Search for books that aren't marked as deleted
+        books = Book.query.filter(Book.name.ilike(f'%{book_name}%'), Book.is_deleted == False).all()
+
+        if not books:
+            return jsonify({"message": "No books found matching the name"}), 404
+
+        result = [
+            {
+                "id": book.id,
+                "name": book.name,
+                "author": book.author,
+                "year_published": book.year_published,
+                "type": book.type
+            }
+            for book in books
+        ]
+
+        return jsonify(result), 200
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
-@app.route('/loans', methods=['GET'])
-def get_loans():
-    loans = Loan.query.all()
-    result = [{"id": loan.id, "cust_id": loan.cust_id, "book_id": loan.book_id, "loan_date": loan.loan_date, "return_date": loan.return_date} for loan in loans]
-    return jsonify(result)
+@app.route('/books/delete/<int:book_id>', methods=['PUT'])
+def soft_delete_book(book_id):
+    try:
+        # Fetch the book by ID
+        book = Book.query.get(book_id)
+        
+        if not book:
+            return jsonify({"message": "Book not found"}), 404
 
+        # Mark the book as deleted
+        book.is_deleted = True
+        db.session.commit()
 
+        return jsonify({"message": "Book has been marked as deleted"}), 200
 
-
-
-
-
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 # crud for customer
@@ -111,7 +172,32 @@ def get_customer(id):
 
     result = {"id": customer.id, "name": customer.name, "city": customer.city, "age": customer.age}
     return jsonify(result), 200
-    
+
+@app.route('/customers/search/<string:customer_name>', methods=['GET'])
+def find_customer_by_name(customer_name):
+    try:
+        # Search for customers by name (case insensitive)
+        customers = Customer.query.filter(Customer.name.ilike(f'%{customer_name}%')).all()
+
+        if not customers:
+            return jsonify({"message": "No customers found matching the name"}), 404
+
+        # Prepare the result
+        result = [
+            {
+                "id": customer.id,
+                "name": customer.name,
+                "city": customer.city,
+                "age": customer.age
+            }
+            for customer in customers
+        ]
+
+        return jsonify(result), 200
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 # function that create a new customer
 def add_new_customer(name, city, age):
     # Create a new customer instance
@@ -191,6 +277,117 @@ def delete_customer(id):
     
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+    
+
+
+# loans crud
+
+# create
+@app.route('/loans', methods=['POST'])
+def add_loan():
+    try:
+        data = request.get_json()
+        cust_id = data.get('cust_id')
+        book_id = data.get('book_id')
+        loan_date_str = data.get('loan_date')
+
+        # Validate input
+        if not cust_id or not book_id or not loan_date_str:
+            return jsonify({"error": "Missing required fields: cust_id, book_id, loan_date"}), 400
+
+        # Convert loan_date string to datetime object
+        loan_date = datetime.strptime(loan_date_str, '%Y-%m-%d')
+
+        # Fetch the book to determine its type
+        book = Book.query.get(book_id)
+        if not book:
+            return jsonify({"error": "Book not found"}), 404
+
+        # Calculate the return date based on book type
+        if book.type == 1:
+            return_date = loan_date + timedelta(days=10)
+        elif book.type == 2:
+            return_date = loan_date + timedelta(days=5)
+        elif book.type == 3:
+            return_date = loan_date + timedelta(days=2)
+        else:
+            return jsonify({"error": "Invalid book type"}), 400
+
+        # Create a new loan entry
+        new_loan = Loan(cust_id=cust_id, book_id=book_id, loan_date=loan_date, return_date=return_date)
+        db.session.add(new_loan)
+        db.session.commit()
+
+        return jsonify({"message": "Loan created successfully!", "return_date": return_date.strftime('%Y-%m-%d')}), 201
+    
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    # read and get all loans
+
+@app.route('/loans', methods=['GET'])
+def get_loans():
+    loans = Loan.query.all()
+    result = [
+        {
+            "id": loan.id,
+            "cust_id": loan.cust_id,
+            "book_id": loan.book_id,
+            "loan_date": loan.loan_date,
+            "return_date": loan.return_date
+        }
+        for loan in loans
+    ]
+    return jsonify(result), 200
+
+# get only one loan by id
+@app.route('/loans/<int:id>', methods=['GET'])
+def get_loan(id):
+    loan = Loan.query.get(id)
+    
+    if loan is None:
+        return jsonify({"error": "Loan not found"}), 404
+
+    result = {
+        "id": loan.id,
+        "cust_id": loan.cust_id,
+        "book_id": loan.book_id,
+        "loan_date": loan.loan_date,
+        "return_date": loan.return_date
+    }
+    return jsonify(result), 200
+
+
+
+@app.route('/loans/late', methods=['GET'])
+def get_late_loans():
+    try:
+        # Get today's date
+        today = datetime.now()
+
+        # Query loans where the return date has passed and they're not yet returned
+        late_loans = Loan.query.filter(Loan.return_date < today).all()
+
+        if not late_loans:
+            return jsonify({"message": "No late loans found"}), 200
+
+        # Prepare the result
+        result = [
+            {
+                "id": loan.id,
+                "cust_id": loan.cust_id,
+                "book_id": loan.book_id,
+                "loan_date": loan.loan_date.strftime('%Y-%m-%d'),
+                "return_date": loan.return_date.strftime('%Y-%m-%d'),
+                "days_late": (today - loan.return_date).days
+            }
+            for loan in late_loans
+        ]
+
+        return jsonify(result), 200
+    
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 
 
 
